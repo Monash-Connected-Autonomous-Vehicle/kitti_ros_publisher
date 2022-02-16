@@ -23,7 +23,7 @@ Repo to allow for easy use of a basic KITTI point cloud publisher for LiDAR. Oth
 5. in a new terminal, call the publisher
 	```sh
     . install/setup.bash
-    ros2 run project_tracker mock_pub
+    ros2 run kitti_publisher pcl2_pub
     ```
     
 ## Contact
