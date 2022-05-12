@@ -1,6 +1,6 @@
 # KITTI Publisher
 
-Repo to allow for easy use of a basic KITTI point cloud publisher for LiDAR. Other sensorpublishers to be added in future.
+Repo to allow fo easy use of a basic KITTI point cloud publisher for LiDAR. Other sensorpublishers to be added in future.
 
 
 ## Getting Started - PCL2 Publisher
