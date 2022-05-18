@@ -1,46 +1,57 @@
-import rclpy
-from rclpy.node import Node
-
+from tokenize import String
 import numpy as np
 import glob 
-
+import rclpy
+import time
+import cv2 as cv
+import PIL
+import math
+from cv_bridge import CvBridge
+from rclpy.node import Node
+from datetime import datetime
+from collections import namedtuple
 from std_msgs.msg import Header
-from sensor_msgs.msg import PointCloud2 as PCL2
-from sensor_msgs.msg import PointField
+from sensor_msgs.msg import PointCloud2 as PCL2, PointField, Image as Img, Imu
+from geometry_msgs.msg import PointStamped, Point
 from sensor_msgs_py import point_cloud2
+from kitti_ros_publisher.oxts_parser import *
 
 
 class KittiRosPublisher(Node):
 
     def __init__(self):
         super(KittiRosPublisher, self).__init__('point_cloud_to_pcl2')
-        self.plc2_pub = self.create_publisher(PCL2, 'pcl2conversion', 10)
-        # self.image_pub = self.create_publisher(_, _, _)  # TODO
-        # self.gps_pub = self.create_publisher(_, _, _)  # TODO
-        # self.imu_pub = self.create_publisher(_, _, _)  # TODO
-        # TODO: create publishers for other useful information
+        self.plc2_pub  = self.create_publisher(PCL2, '/velodyne_points', 10)
+        self.leftImg_pub = self.create_publisher(Img, '/img_left', 10)
+        self.rightImg_pub = self.create_publisher(Img, '/img_right', 10)
+        self.imuOut_pub = self.create_publisher(Imu, '/imu_output', 10)
+        self.imuPose_pub = self.create_publisher(PointStamped, '/imu_pose', 10)
 
         timer_period = 0.5
         self.spinner = self.create_timer(timer_period, self.spin)
 
-        # Paths
-        data_path = 'data/2011_09_26_drive_0001_sync/2011_09_26/2011_09_26_drive_0001_sync'
+        # Data paths
+        self.data_path = 'data/2011_09_26_drive_0001_sync/2011_09_26/2011_09_26_drive_0001_sync'
+        self.velodyne_file_paths = sorted(glob.glob(self.data_path + '/velodyne_points/data/*.bin'))
+        self.leftImg_file_paths = sorted(glob.glob(self.data_path + '/image_02/data/*.png'))
+        self.rightImg_file_paths = sorted(glob.glob(self.data_path + '/image_03/data/*.png'))
+        self.oxts_file_paths = sorted(glob.glob(self.data_path + '/oxts/data/*.txt'))
 
-        self.velodyne_file_paths = glob.glob(data_path + '/velodyne_points/data/*.bin')
-        self.velodyne_timestamps_file = open(data_path + '/velodyne_points/timestamps.txt', 'r')
+        # Timestamp paths
+        self.velodyne_timestamps_file = open(self.data_path + '/velodyne_points/timestamps.txt', 'r')
         self.velodyne_timestamps = self.timestamp_extract(self.velodyne_timestamps_file)
-
-        self.leftImg_file_paths = glob.glob(data_path + '/image_02/data/*.png')
-        self.leftImg_timestamps_file = open(data_path + '/image_02/timestamps.txt', 'r')
-        self.leftImg_timestamps = self.timestamp_extract(self.leftImg_timestamps_file)
-        
-        self.rightImg_file_paths = glob.glob(data_path + '/image_03/data/*.png')
-        self.rightImg_timestamps_fule = open(data_path + '/image_03/timestamps.txt', 'r')
+        self.leftImg_timestamps_file = open(self.data_path + '/image_02/timestamps.txt', 'r')
+        self.leftImg_timestamps = self.timestamp_extract(self.leftImg_timestamps_file)  
+        self.rightImg_timestamps_file = open(self.data_path + '/image_03/timestamps.txt', 'r')
         self.rightImg_timestamps = self.timestamp_extract(self.rightImg_timestamps_file)
-        
-        self.oxts_file_paths = glob.glob(data_path + '/oxts/data/*.txt')
-        self.oxts_timestamps_fule = open(data_path + '/oxts/timestamps.txt', 'r')
+        self.oxts_timestamps_file = open(self.data_path + '/oxts/timestamps.txt', 'r')
         self.oxts_timestamps = self.timestamp_extract(self.oxts_timestamps_file)
+
+        # Other variables
+        self.left_Id = "img02"
+        self.right_Id = "img03"
+        self.oxts_origin = None
+        self.oxts_scale = None
 
 
     ### Callback functions
@@ -54,44 +65,78 @@ class KittiRosPublisher(Node):
     def plc2_pubber(self):
         """Callback to PLC2 publisher"""
         if self.velodyne_file_paths:
-            msg = self.convert_bin_to_PCL2(self.velodyne_file_paths.pop())
+            msg = self.convert_bin_to_PCL2(self.velodyne_file_paths.pop(0))
             self.plc2_pub.publish(msg)
         else:
+            self.velodyne_file_paths = sorted(glob.glob(self.data_path + '/velodyne_points/data/*.bin'))
             self.get_logger().info("no more velodyne points to publish...")
 
 
     def image_pubber(self):
         """Callback to image publisher"""
-        pass # TODO
+        if self.leftImg_file_paths:
+            msg = self.cv2ImageToRosImage(self.leftImg_file_paths.pop(0), self.left_Id)
+            self.leftImg_pub.publish(msg)
+            
+        else:
+            self.leftImg_file_paths = sorted(glob.glob(self.data_path + '/image_02/data/*.png'))
+            self.get_logger().info("no more left images to publish...")
+
+        if self.rightImg_file_paths:
+            msg = self.cv2ImageToRosImage(self.rightImg_file_paths.pop(0), self.right_Id)
+            self.rightImg_pub.publish(msg)
+            
+        else:
+            self.rightImg_file_paths = sorted(glob.glob(self.data_path + '/image_03/data/*.png'))
+            self.get_logger().info("no more right images to publish...")
 
 
     def oxts_pubber(self):
         """Callback to oxts publisher"""
-        pass # TODO
+        if self.oxts_file_paths:
+            imu_msg, gps_msg = self.oxts_to_imu(self.oxts_file_paths.pop())
+            self.imuOut_pub.publish(imu_msg)
+            self.imuPose_pub.publish(gps_msg)
+        else:
+            self.oxts_file_paths = sorted(glob.glob(self.data_path + '/oxts/data/*.txt'))
+            self.get_logger().info("no more oxts data to publish...")
 
 
     ### Miscellaneous functions
-    def timestamp_extract(self, txt_file):
-        """Converts timestamp file to list"""
-        timestamp_list =[]
+    # TODO: Currently unused
+    def timestamp_extract(self, timestamp_file_path:list) -> list:
+        """Converts timestamp text file to list.
 
-        for timestamp in txt_file.readlines():
+        Args:
+            timestamp_file_path (list): .txt file of timestamps.
+
+        Returns:
+            list: list of timestamps.
+        """
+
+        timestamp_list=[]
+
+        for timestamp in timestamp_file_path.readlines():
             timestamp_list.append([timestamp])
 
         return timestamp_list
 
 
-    def convert_bin_to_PCL2(self, velodyne_file_path):
-        """Method to convert Lidar data in binary format to PCL2 message"""
+    def convert_bin_to_PCL2(self, velodyne_file_path:list) -> list:
+        """Method to convert Lidar data in binary format to PCL2 message.
+
+        Args:
+            velodyne_file_path (list): path to lidar data files.
+        Returns:
+            list: pcl2 lidar data.
+        """
         
         cloud = np.fromfile(velodyne_file_path, np.float32)
         cloud = cloud.reshape((-1, 4))
-        # x, y, z, r = cloud[::4], cloud[1::4], cloud[2::4], cloud[3::4]
 
         header = Header()
         header.frame_id = 'velodyne'
-        header.stamp = self.velodyne_timestamps.pop()
-        
+        header.stamp = self.get_clock().now().to_msg()
         fields = [
             PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
             PointField(name='y', offset=4, datatype=PointField.FLOAT32, count=1),
@@ -104,6 +149,75 @@ class KittiRosPublisher(Node):
         self.get_logger().info(f"Publishing, first point: {cloud[0:5]}")
 
         return pcl2_msg
+
+
+    def cv2ImageToRosImage(self, imgPath:str, Frame_Id:str) -> Img:
+        """Method to convert openCV images to ROS Image message.
+
+        Args:
+            imgPath (str): path to image files
+            Frame_Id (str): frame id of images
+
+        Returns:
+            Img: sensor_msgs/Image message
+        """
+
+        cv2_img = cv.imread(imgPath)
+
+        bridge = CvBridge()
+        image_message = bridge.cv2_to_imgmsg(cv2_img, encoding="passthrough")
+        image_message.header.frame_id = Frame_Id
+
+        self.get_logger().info(f"Publishing, image: {Frame_Id}")
+
+        return image_message     
+
+
+    def oxts_to_imu(self, oxts_filename:str) -> Tuple[Imu, PointStamped]:
+        """Extracts imu information from oxts files.
+
+        Args:
+            oxts_filename (str): path to oxts files
+
+        Returns:
+            Tuple[Imu, PointStamped]: IMU message containing rotational, angular velocity and linear acceleration data; PointStamped message containing GPS data.
+        """
+
+        oxts_tf, oxtf_vel, oxtf_acc, self.oxts_origin = load_oxts_packets_and_poses([oxts_filename], self.oxts_origin, self.oxts_scale)
+        
+        R = oxts_tf[0][:3,:3]  # IMU rotation
+        T = oxts_tf[0][:,-1]  # GPS coordinates
+
+        # Quaternion
+        qw = math.sqrt(1.0 + R[0,0] + R[1,1] + R[2,2]) / 2
+        qx = (R[2,1] - R[1,2]) / (4 * qw)
+        qy = (R[0,2] - R[2,0]) / (4 * qw)
+        qz = (R[1,0] - R[0,1]) / (4 * qw)
+
+        # GPS message
+        gps_msg = PointStamped()
+        gps_msg.header.frame_id = 'base_link'
+        gps_msg.header.stamp = self.get_clock().now().to_msg()
+        gps_msg.point.x = T[0]
+        gps_msg.point.y = T[1]
+        gps_msg.point.z = T[2]
+
+        # IMU message
+        imu_msg = Imu()
+        imu_msg.header.frame_id = 'base_link'
+        imu_msg.header.stamp = self.get_clock().now().to_msg()
+        imu_msg.orientation.x = qx
+        imu_msg.orientation.y = qy
+        imu_msg.orientation.z = qz
+        imu_msg.orientation.w = qw
+        imu_msg.angular_velocity.x = oxtf_vel[0]
+        imu_msg.angular_velocity.y = oxtf_vel[1]
+        imu_msg.angular_velocity.z = oxtf_vel[2]
+        imu_msg.linear_acceleration.x = oxtf_acc[0]
+        imu_msg.linear_acceleration.y = oxtf_acc[1]
+        imu_msg.linear_acceleration.z = oxtf_acc[2]
+
+        return imu_msg, gps_msg
 
 
 def main(args=None):
