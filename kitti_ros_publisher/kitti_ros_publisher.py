@@ -6,6 +6,7 @@ import time
 import cv2 as cv
 import PIL
 import math
+import os
 from cv_bridge import CvBridge
 from rclpy.node import Node
 from datetime import datetime
@@ -218,6 +219,83 @@ class KittiRosPublisher(Node):
         imu_msg.linear_acceleration.z = oxtf_acc[2]
 
         return imu_msg, gps_msg
+
+
+class Calibration():
+
+    def __init__(self, filepath):
+
+        self.filepath = filepath
+  
+        calib_velo_to_cam = self.read_calib_file(filepath + "calib_velo_to_cam.txt")
+        calib_cam_to_cam  = self.read_calib_file(filepath + "calib_cam_to_cam.txt")
+        calib_imu_to_velo = self.read_calib_file(filepath + "calib_imu_to_velo.txt")
+
+        # camera calibration
+        self.K = calib_cam_to_cam["K_02"]
+        
+        # Projection matrix from rect camera coord to image2 coord 
+        self.P      = calib_cam_to_cam["P_rect_02"].reshape(3, 4)
+
+        # rect mat
+        R_rect = calib_cam_to_cam["R_rect_02"].reshape(3, 3)
+        self.R_rect = self.transform_from_rot_trans(R_rect, np.zeros(3))
+
+
+        # Rotation and Translation matrix (velodyne)
+        R = calib_velo_to_cam["R"].reshape(3, 3)
+        T = calib_velo_to_cam["T"].reshape(3, 1)
+
+        # Rigid transform from Velodyne coord to reference camera coord
+        self.T_velo_cam = np.concatenate((R, T), axis = 1)
+        self.T_velo_cam = np.vstack([self.T_velo_cam, [0, 0, 0, 1]])
+
+        # Rotation and Translation matrix (velodyne)
+        R = calib_imu_to_velo["R"].reshape(3, 3)
+        T = calib_imu_to_velo["T"].reshape(3, 1)
+
+        # Rigid transform IMU coord from Velodyne coord
+        self.T_imu_velo = np.concatenate((R, T), axis = 1)
+        self.T_imu_velo = np.vstack([self.T_imu_velo, [0, 0, 0, 1]])
+
+    def read_calib_file(self, filepath):
+        """ Read in a calibration file and parse into a dictionary.
+        Ref: https://github.com/utiasSTARS/pykitti/blob/master/pykitti/utils.py
+        """
+
+        data = {}
+        with open(filepath, "r") as f:
+            for line in f.readlines():
+                line = line.rstrip()
+                if len(line) == 0:
+                    continue
+                key, value = line.split(":", 1)
+                # The only non-float values in these files are dates, which
+                # we don't care about anyway
+                try:
+                    data[key] = np.array([float(x) for x in value.split()])
+                except ValueError:
+                    pass
+
+        return data
+    
+    def transform_from_rot_trans(self, R, t):
+        """
+        Transformation matrix from rotation matrix and translation vector.
+        Parameters
+        ----------
+        R : np.array [3,3]
+            Rotation matrix
+        t : np.array [3]
+            translation vector
+        Returns
+        -------
+        matrix : np.array [4,4]
+            Transformation matrix
+        """
+        R = R.reshape(3, 3)
+        t = t.reshape(3, 1)
+        return np.vstack((np.hstack([R, t]), [0, 0, 0, 1]))
 
 
 def main(args=None):
