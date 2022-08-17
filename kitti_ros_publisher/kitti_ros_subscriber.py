@@ -18,6 +18,7 @@ from sensor_msgs_py import point_cloud2
 #from kitti_ros_subscriber.oxts_parser import *
 import os
 import shutil
+from pypcd import pypcd
 
 
 class KittiRosSubscriber(Node):
@@ -25,11 +26,10 @@ class KittiRosSubscriber(Node):
     def __init__(self):
         super(KittiRosSubscriber, self).__init__('the_subscriber')
 
-        #### Variables  
+        #### Path Variables  
         # This needs to be fixed - most likely will with a launch file configuration
         self.cwd = "/home/mcav/liam_ws/localisation/localisation_ws/src/kitti_ros_publisher"
         self.dataDir = "/home/mcav/DATASETS"
-        #self.cwd = os.getcwd()
         self.left_Id = "img02"
         self.right_Id = "img03"
         self.imu_Id = "oxts"
@@ -37,6 +37,10 @@ class KittiRosSubscriber(Node):
         self.date = "yyyy-mm-dd"
         self.drive_number = "drive-nnnn-sync"
         self.directory_Id = os.path.join(self.dataDir, self.date)
+
+        # Extra Variables
+        self.lidar_topic = '/velodyne_points'
+        self.imu_topic = 'imu_topic'
 
         #### Calibration files
         self.cam_to_cam = "calib-cam-to-cam.txt"
@@ -46,14 +50,7 @@ class KittiRosSubscriber(Node):
         self.create_directory()
 
         #### Subscriptions
-        self.create_subscription(PCL2,'/velodyne_points',self.lidar_callback)
-
-        #### Data paths
-        self.data_path = 'data/2011_09_26_drive_0001_sync/2011_09_26/2011_09_26_drive_0001_sync'
-        self.velodyne_file_paths = sorted(glob.glob(self.data_path + '/velodyne_points/data/*.bin'))
-        self.leftImg_file_paths = sorted(glob.glob(self.data_path + '/image_02/data/*.png'))
-        self.rightImg_file_paths = sorted(glob.glob(self.data_path + '/image_03/data/*.png'))
-        self.oxts_file_paths = sorted(glob.glob(self.data_path + '/oxts/data/*.txt'))
+        self.create_subscription(PCL2,self.lidar_topic,self.lidar_callback, 10)
 
     
     #### Creating Directories and Text files in appropriate format
@@ -94,13 +91,49 @@ class KittiRosSubscriber(Node):
 
 
     #### Callbacks
-    def lidar_callback(self):
-        ###
-        pass
+    def lidar_callback(self, msg):
+        exampleBinary = '000000000111.bin'
+        lidarpath = os.path.join(self.directory_Id,self.date + '-' + self.drive_number,self.lidar_Id,'data',exampleBinary)
+        f = open(lidarpath, 'w')
+        self.convert_PCL2_to_bin(msg, lidarpath)
 
     def imu_callback(self):
         ###
         pass
+
+
+
+    def convert_PCL2_to_bin(self, msg, fileName):
+        """Method to convert Lidar data in PCL2 message to binary format.
+        Args:
+            list: pcl2 lidar data.
+        Returns:
+            velodyne_file_path (list): path to lidar data files.
+        """
+        
+        # to Bin
+        # pc = pypcd.PointCloud.from_msg(msg)
+        # pc = pypcd.PointCloud.from_msg(msg)
+        # x = pc.pc_data['x']
+        # y = pc.pc_data['y']
+        # z = pc.pc_data['z']
+        # intensity = pc.pc_data['intensity']
+
+        cloud_points = list(point_cloud2.read_points(msg, skip_nans=True))#, field_names = ("x", "y", "z", "intensity")))
+        x = [i[0] for i in cloud_points]
+        y = [i[1] for i in cloud_points]
+        z = [i[2] for i in cloud_points]
+        intensity = [i[3] for i in cloud_points]
+        
+        #arr = np.zeros(x + y.shape[0] + z.shape[0] + intensity.shape[0], dtype=np.float32)
+        arr = np.zeros(len(x) + len(y) + len(z) + len(intensity), dtype=np.float32)
+        arr[::4] = x
+        arr[1::4] = y
+        arr[2::4] = z
+        arr[3::4] = intensity
+        print(len(arr))
+        arr.astype('float32').tofile(fileName)
+        return 
 
 def main(args=None):
     rclpy.init(args=args)

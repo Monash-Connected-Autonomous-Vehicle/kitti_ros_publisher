@@ -131,7 +131,6 @@ class KittiRosPublisher(Node):
         Returns:
             list: pcl2 lidar data.
         """
-        
         cloud = np.fromfile(velodyne_file_path, np.float32)
         cloud = cloud.reshape((-1, 4))
 
