@@ -1,0 +1,9 @@
+lat:   latitude of the oxts-unit (deg)
+lon:   longitude of the oxts-unit (deg)
+alt:   altitude of the oxts-unit (m)
+roll:  roll angle (rad),    0 = level, positive = left side up,      range: -pi   .. +pi
+pitch: pitch angle (rad),   0 = level, positive = front down,        range: -pi/2 .. +pi/2
+yaw:   heading (rad),       0 = east,  positive = counter clockwise, range: -pi   .. +pi
+ax:    acceleration in x, i.e. in direction of vehicle front (m/s^2)
+ay:    acceleration in y, i.e. in direction of vehicle left (m/s^2)
+ay:    acceleration in z, i.e. in direction of vehicle top (m/s^2)
