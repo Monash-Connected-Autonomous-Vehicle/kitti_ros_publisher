@@ -33,6 +33,7 @@ class KittiRosPublisher(Node):
 
         # Data paths
         self.data_path = '/home/mcav/DATASETS/KITTI/2011_09_26/2011_09_26_drive_0048_sync'
+        #self.data_path = '/home/mcav/DATASETS/2022-08-25/2022-08-25-drive-0001-sync'
         self.velodyne_file_paths = sorted(glob.glob(self.data_path + '/velodyne_points/data/*.bin'))
         self.leftImg_file_paths = sorted(glob.glob(self.data_path + '/image_02/data/*.png'))
         self.rightImg_file_paths = sorted(glob.glob(self.data_path + '/image_03/data/*.png'))
