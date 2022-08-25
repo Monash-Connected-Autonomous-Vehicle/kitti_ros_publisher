@@ -1,5 +1,9 @@
+from pyexpat import XML_PARAM_ENTITY_PARSING_NEVER
+from pyexpat.errors import XML_ERROR_INCOMPLETE_PE
 from tokenize import String
+#from uuid import RFC_4122
 import numpy as np
+from scipy import integrate
 import glob 
 import rclpy
 import time
@@ -38,9 +42,13 @@ class KittiRosSubscriber(Node):
 
         # Extra Variables
         self.lidar_topic = '/velodyne_points'
-        self.imu_topic = '/imu_pose'
+        self.imu_topic = '/imu_output'
         self.imu_callback_counter = 0
         self.lidar_callback_counter = 0
+        self.last_rotMat = 0
+        self.x_acc = np.empty(1)
+        self.y_acc = np.empty(1)
+        self.z_acc = np.empty(1)
 
         #### Calibration files
         self.cam_to_cam = "calib-cam-to-cam.txt"
@@ -51,10 +59,10 @@ class KittiRosSubscriber(Node):
 
         #### Subscriptions
         self.create_subscription(PCL2,self.lidar_topic,self.lidar_callback, 10)
-        self.create_subscription(PointStamped,self.imu_topic,self.imu_callback, 10)
+        #self.create_subscription(PointStamped,self.imu_topic,self.imu_callback, 10)
 
         ## NEED TO IMPLEMENT: Imu -> Pose
-        #self.create_subscription(Imu,self.imu_topic,self.imu_callback, 10)
+        self.create_subscription(Imu,self.imu_topic,self.imu_callback, 10)
 
     
     def create_directory(self):
@@ -124,6 +132,7 @@ class KittiRosSubscriber(Node):
         self.lidar_callback_counter += 1
 
     def imu_callback(self, msg):
+        print(msg.linear_acceleration.x)
         timestamps_file = os.path.join(self.directory_Id,self.date + '-' + self.drive_number,self.imu_Id,'timestamps.txt')
         self.add_timestamp(timestamps_file, datetime.now())
         new_txt_file = str(self.imu_callback_counter) .zfill(10)+ '.txt'
@@ -166,15 +175,38 @@ class KittiRosSubscriber(Node):
         """
         # Currently defined to work with geometry_msgs/msg/PoseStamped
         f = open(file_name, 'w')
+        self.x_acc = np.append(self.x_acc, msg.linear_acceleration.x)
+        self.y_acc = np.append(self.y_acc, msg.linear_acceleration.y)
+        self.z_acc = np.append(self.z_acc, msg.linear_acceleration.z)
+
+        x_ori = msg.orientation.x
+        y_ori = msg.orientation.y
+        z_ori = msg.orientation.z
+        w_ori = msg.orientation.w
+
+        roll, pitch, yaw = self.euler_from_quaternion(x_ori, y_ori, z_ori, w_ori)
+        rot_mat = self.euler_to_rotMat(yaw, pitch, roll)
+
         # Data Structure Currently is a Euler Pose: "X Y Z"
         if self.imu_callback_counter == 0:
             # Set initial Pose to zeros
+            self.last_rotMat = rot_mat
             data_string = "0 0 0 0 0 0"
         else:
-            X = msg.point.x
-            Y = msg.point.y
-            Z = msg.point.z
-            data_string = str(X) + " " + str(Y) + " " + str(Z) + " 0 0 0"
+            vel_x = integrate.cumtrapz(self.x_acc)
+            dist_x = integrate.cumtrapz(vel_x)
+            vel_y = integrate.cumtrapz(self.y_acc)
+            dist_y = integrate.cumtrapz(vel_y)
+            vel_z = integrate.cumtrapz(self.z_acc)
+            dist_z = integrate.cumtrapz(vel_z)
+
+            # We start with R01 and then we get R0x: we want R(X-1)(X)
+            #R02 = R01*R12
+            #R01_1*R02 = R12 
+            curr_rot_mat = np.matmul(np.linalg.inv(self.last_rotMat),rot_mat)
+            self.last_rotMat = curr_rot_mat
+            roll, pitch, yaw = self.rot2eul(curr_rot_mat)
+            data_string = str(dist_x[-1]) + " " + str(dist_y[-1]) + " " + str(dist_z[-1]) + " " + str(roll) + " " + str(pitch) + " " + str(yaw)
         f.write(data_string)
         f.close()
 
@@ -183,7 +215,7 @@ class KittiRosSubscriber(Node):
         f.write(str(time)+"\n")
         f.close()
 
-    def euler_from_quaternion(x, y, z, w):
+    def euler_from_quaternion(self, x, y, z, w):
         """
         Convert a quaternion into euler angles (roll, pitch, yaw)
         roll is rotation around x in radians (counterclockwise)
@@ -205,6 +237,28 @@ class KittiRosSubscriber(Node):
      
         return roll_x, pitch_y, yaw_z # in radians
 
+    def euler_to_rotMat(self, yaw, pitch, roll):
+        Rz_yaw = np.array([
+            [np.cos(yaw), -np.sin(yaw), 0],
+            [np.sin(yaw),  np.cos(yaw), 0],
+            [          0,            0, 1]])
+        Ry_pitch = np.array([
+            [ np.cos(pitch), 0, np.sin(pitch)],
+            [             0, 1,             0],
+            [-np.sin(pitch), 0, np.cos(pitch)]])
+        Rx_roll = np.array([
+            [1,            0,             0],
+            [0, np.cos(roll), -np.sin(roll)],
+            [0, np.sin(roll),  np.cos(roll)]])
+        # R = RzRyRx
+        rotMat = np.dot(Rz_yaw, np.dot(Ry_pitch, Rx_roll))
+        return rotMat
+
+    def rot2eul(self, R):
+        beta = -np.arcsin(R[2,0])
+        alpha = np.arctan2(R[2,1]/np.cos(beta),R[2,2]/np.cos(beta))
+        gamma = np.arctan2(R[1,0]/np.cos(beta),R[0,0]/np.cos(beta))
+        return alpha, beta, gamma
 
 
 def main(args=None):
