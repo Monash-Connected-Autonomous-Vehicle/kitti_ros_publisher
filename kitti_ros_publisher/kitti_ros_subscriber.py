@@ -19,6 +19,7 @@ from std_msgs.msg import Header
 from sensor_msgs.msg import PointCloud2 as PCL2, PointField, Image as Img, Imu
 from geometry_msgs.msg import PointStamped, Point
 from sensor_msgs_py import point_cloud2
+from nav_msgs.msg import Odometry
 #from kitti_ros_subscriber.oxts_parser import *
 import os
 import shutil
@@ -41,10 +42,13 @@ class KittiRosSubscriber(Node):
         self.directory_Id = os.path.join(self.dataDir, self.date)
 
         # Extra Variables
-        self.lidar_topic = '/velodyne_points'
+        self.lidar_topic = '/carla/ego_vehicle/lidar' #'/velodyne_points'
+        self.point_stamped_topic = '/imu_pose'
         self.imu_topic = '/imu_output'
+        self.odom_topic = '/carla/ego_vehicle/odom'
         self.imu_callback_counter = 0
         self.lidar_callback_counter = 0
+        self.odom_callback_counter = 0
         self.last_rotMat = 0
         self.x_acc = np.empty(1)
         self.y_acc = np.empty(1)
@@ -59,10 +63,18 @@ class KittiRosSubscriber(Node):
 
         #### Subscriptions
         self.create_subscription(PCL2,self.lidar_topic,self.lidar_callback, 10)
-        #self.create_subscription(PointStamped,self.imu_topic,self.imu_callback, 10)
 
-        ## NEED TO IMPLEMENT: Imu -> Pose
-        self.create_subscription(Imu,self.imu_topic,self.imu_callback, 10)
+        #### Pose Estimation - Please choose one topic to subscribe to ####
+
+        # 1) Uncomment this for Pose estimation from PointStamped topic
+        #self.create_subscription(PointStamped,self.point_stamped_topic,self.imu_pstamped_callback, 10)
+
+        
+        # 2) Uncomment this for Pos estimation of IMU topic
+        # self.create_subscription(Imu,self.imu_topic,self.imu_callback, 10)
+
+        # 3) Uncomment this for pose from Odometry Topic
+        self.create_subscription(Odometry,self.odom_topic,self.odom_callback, 10)
 
     
     def create_directory(self):
@@ -74,9 +86,9 @@ class KittiRosSubscriber(Node):
         """
         if os.path.isdir(self.directory_Id):
             # Add new drive
-            list_of_dirs = os.listdir(self.directory_Id)
+            list_of_dirs = [ name for name in os.listdir(self.directory_Id) if os.path.isdir(os.path.join(self.directory_Id, name)) ]
             # -4 gets last drive excluding calib files
-            drive = list_of_dirs[0].split("-")[4]
+            drive = (list_of_dirs[0].split("-")[4])
             self.drive_number = "drive-" + str(int(drive)+1).zfill(4) +"-sync"
         else:
             # First Drive of Day
@@ -131,8 +143,15 @@ class KittiRosSubscriber(Node):
 
         self.lidar_callback_counter += 1
 
+    def imu_pstamped_callback(self, msg):
+        timestamps_file = os.path.join(self.directory_Id,self.date + '-' + self.drive_number,self.imu_Id,'timestamps.txt')
+        self.add_timestamp(timestamps_file, datetime.now())
+        new_txt_file = str(self.imu_callback_counter) .zfill(10)+ '.txt'
+        dataFile = os.path.join(self.directory_Id,self.date + '-' + self.drive_number,self.imu_Id,'data',new_txt_file)
+        self.write_imu_pstamped_to_txt(msg, dataFile)
+        
+
     def imu_callback(self, msg):
-        print(msg.linear_acceleration.x)
         timestamps_file = os.path.join(self.directory_Id,self.date + '-' + self.drive_number,self.imu_Id,'timestamps.txt')
         self.add_timestamp(timestamps_file, datetime.now())
         new_txt_file = str(self.imu_callback_counter) .zfill(10)+ '.txt'
@@ -140,6 +159,14 @@ class KittiRosSubscriber(Node):
         self.write_imu_to_txt(msg, dataFile)
         
         self.imu_callback_counter += 1
+
+    def odom_callback(self, msg):
+        timestamps_file = os.path.join(self.directory_Id,self.date + '-' + self.drive_number,self.imu_Id,'timestamps.txt')
+        self.add_timestamp(timestamps_file, datetime.now())
+        new_txt_file = str(self.imu_callback_counter) .zfill(10)+ '.txt'
+        dataFile = os.path.join(self.directory_Id,self.date + '-' + self.drive_number,self.imu_Id,'data',new_txt_file)
+        self.write_odom_to_txt(msg, dataFile)
+
 
     def write_PCL2_to_bin(self, msg, file_name):
         """Method to convert Lidar data in PCL2 message to binary format and write to file.
@@ -163,6 +190,26 @@ class KittiRosSubscriber(Node):
         arr[3::4] = intensity
         print("Writing Lidar message of size: " + str(len(arr)) + " to binaryfile")
         arr.astype('float32').tofile(file_name)
+
+    def write_imu_pstamped_to_txt(msg, file_name):
+        """Method to convert Imu PointStamped data in Imu message to txt format and write to file.
+        Args:
+            ROS Msg: imu PointStamped data.
+            String: File name to write to.
+            Currently no estimation of orientation on this topic
+        Returns:
+            Na
+        """
+        f = open(file_name, 'w')
+        dist_x = msg.point.x
+        dist_y = msg.point.position.y
+        dist_z = msg.point.position.z
+        roll = 0
+        pitch = 0
+        yaw = 0
+        data_string = str(dist_x) + " " + str(dist_y) + " " + str(dist_z) + " " + str(roll) + " " + str(pitch) + " " + str(yaw)
+        f.write(data_string)
+        f.close()
         
         
     def write_imu_to_txt(self, msg, file_name):
@@ -178,6 +225,7 @@ class KittiRosSubscriber(Node):
         self.x_acc = np.append(self.x_acc, msg.linear_acceleration.x)
         self.y_acc = np.append(self.y_acc, msg.linear_acceleration.y)
         self.z_acc = np.append(self.z_acc, msg.linear_acceleration.z)
+        print(self.x_acc)
 
         x_ori = msg.orientation.x
         y_ori = msg.orientation.y
@@ -207,6 +255,20 @@ class KittiRosSubscriber(Node):
             self.last_rotMat = curr_rot_mat
             roll, pitch, yaw = self.rot2eul(curr_rot_mat)
             data_string = str(dist_x[-1]) + " " + str(dist_y[-1]) + " " + str(dist_z[-1]) + " " + str(roll) + " " + str(pitch) + " " + str(yaw)
+        f.write(data_string)
+        f.close()
+
+    def write_odom_to_txt(msg, file_name):
+        f = open(file_name, 'w')
+        dist_x = msg.pose.pose.position.x
+        dist_y = msg.pose.pose.position.y
+        dist_z = msg.pose.pose.position.z
+        roll = msg.pose.pose.orientation.x
+        pitch = msg.pose.pose.orientation.y
+        yaw = msg.pose.pose.orientation.z
+        w = msg.pose.pose.orientation.w
+
+        data_string = str(dist_x) + " " + str(dist_y) + " " + str(dist_z) + " " + str(roll) + " " + str(pitch) + " " + str(yaw) + " " + str(w)
         f.write(data_string)
         f.close()
 
@@ -250,7 +312,6 @@ class KittiRosSubscriber(Node):
             [1,            0,             0],
             [0, np.cos(roll), -np.sin(roll)],
             [0, np.sin(roll),  np.cos(roll)]])
-        # R = RzRyRx
         rotMat = np.dot(Rz_yaw, np.dot(Ry_pitch, Rx_roll))
         return rotMat
 

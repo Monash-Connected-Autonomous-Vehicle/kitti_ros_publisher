@@ -138,7 +138,6 @@ def load_oxts_packets_and_poses(oxts_files:list, origin:np.array = None, scale:f
                     origin = t
 
                 T_w_imu = transform_from_rot_trans(R, t - origin) # t - origin -> change
-
                 oxts_tf.append(T_w_imu)
 
                 oxtf_acc = [packet.ax, packet.ay, packet.az]
